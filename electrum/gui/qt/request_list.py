@@ -105,6 +105,9 @@ class RequestList(MyTreeView):
         if req.is_lightning():
             self.parent.receive_lightning_e.setText(req.lightning_invoice)  # TODO maybe prepend "lightning:" ??
             self.parent.receive_lightning_qr.setData(req.lightning_invoice)
+        elif req.swap_invoice:
+            self.parent.receive_lightning_e.setText(req.swap_invoice)
+            self.parent.receive_lightning_qr.setData(req.swap_invoice)
         else:
             self.parent.receive_lightning_e.setText('')
             self.parent.receive_lightning_qr.setData('')

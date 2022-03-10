@@ -191,6 +191,10 @@ class SwapManager(Logger):
             if amount_sat < dust_threshold():
                 self.logger.info('utxo value below dust threshold')
                 continue
+            if swap.is_reverse and swap.receive_address in self.wallet.receive_requests:
+                # use exact amount for payment detection
+                req = self.wallet.receive_requests[swap.receive_address]
+                amount_sat = req.get_amount_sat()
             if swap.is_reverse:  # successful reverse swap
                 preimage = swap.preimage
                 locktime = 0
@@ -331,12 +335,12 @@ class SwapManager(Logger):
         await self.network.broadcast_transaction(tx)
         return tx.txid()
 
-    async def reverse_swap(
+    async def create_reverse_swap(
             self,
-            *,
             lightning_amount_sat: int,
             expected_onchain_amount_sat: int,
-    ) -> bool:
+            receive_address: str,
+    ):
         """send on Lightning, receive on-chain
 
         - User generates preimage, RHASH. Sends RHASH to server.
@@ -411,7 +415,6 @@ class SwapManager(Logger):
             raise Exception(f"rswap check failed: invoice_amount ({invoice_amount}) "
                             f"not what we requested ({lightning_amount_sat})")
         # save swap data to wallet file
-        receive_address = self.wallet.get_receiving_address()
         swap = SwapData(
             redeem_script = redeem_script,
             locktime = locktime,
@@ -430,9 +433,21 @@ class SwapManager(Logger):
         self.swaps[preimage_hash.hex()] = swap
         # add callback to lnwatcher
         self.add_lnwatcher_callback(swap)
-        # initiate payment.
+        #
         if fee_invoice:
             self.prepayments[prepay_hash] = preimage_hash
+        return invoice, fee_invoice
+
+    async def reverse_swap(
+            self,
+            *,
+            lightning_amount_sat: int,
+            expected_onchain_amount_sat: int,
+    ) -> bool:
+        receive_address = self.wallet.get_receiving_address()
+        invoice, fee_invoice = self.create_reverse_swap(lightning_amount_sat, expected_onchain_amount_sat, receive_address)
+        # initiate payment.
+        if fee_invoice:
             asyncio.ensure_future(self.lnworker.pay_invoice(fee_invoice, attempts=10))
         # initiate payment.
         success, log = await self.lnworker.pay_invoice(invoice, attempts=10)
