@@ -336,6 +336,9 @@ class LnAddr(object):
     def get_description(self) -> str:
         return self.get_tag('d') or ''
 
+    def get_fallback_address(self) -> str:
+        return self.get_tag('f') or ''
+
     def get_expiry(self) -> int:
         exp = self.get_tag('x')
         if exp is None:

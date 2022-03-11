@@ -85,7 +85,8 @@ class RequestList(MyTreeView):
 
     def item_changed(self, idx: Optional[QModelIndex]):
         if idx is None:
-            self.parent.receive_payreq_e.setText('')
+            self.parent.receive_URI_e.setText('')
+            self.parent.receive_lightning_e.setText('')
             self.parent.receive_address_e.setText('')
             return
         if not idx.isValid():
@@ -97,13 +98,19 @@ class RequestList(MyTreeView):
         if req is None:
             self.update()
             return
+        self.parent.receive_URI_e.setText(req.get_bip21_URI())  # TODO maybe prepend "lightning:" ??
+        self.parent.receive_address_e.setText(req.get_address())
+        self.parent.receive_address_qr.setData(req.get_address())
+        self.parent.receive_URI_qr.setData(req.get_bip21_URI())
         if req.is_lightning():
-            self.parent.receive_payreq_e.setText(req.lightning_invoice)  # TODO maybe prepend "lightning:" ??
-            self.parent.receive_address_e.setText(req.lightning_invoice)
+            self.parent.receive_lightning_e.setText(req.lightning_invoice)  # TODO maybe prepend "lightning:" ??
+            self.parent.receive_lightning_qr.setData(req.lightning_invoice)
         else:
-            self.parent.receive_payreq_e.setText(self.parent.wallet.get_request_URI(req))
-            self.parent.receive_address_e.setText(req.get_address())
-        self.parent.receive_payreq_e.repaint()  # macOS hack (similar to #4777)
+            self.parent.receive_lightning_e.setText('')
+            self.parent.receive_lightning_qr.setData('')
+
+        self.parent.receive_lightning_e.repaint()  # macOS hack (similar to #4777)
+        self.parent.receive_URI_e.repaint()  # macOS hack (similar to #4777)
         self.parent.receive_address_e.repaint()  # macOS hack (similar to #4777)
 
     def clearSelection(self):

@@ -10,6 +10,7 @@ from .util import age, InvoiceError
 from .lnaddr import lndecode, LnAddr
 from . import constants
 from .bitcoin import COIN, TOTAL_COIN_SUPPLY_LIMIT_IN_BTC
+from .bitcoin import address_to_script
 from .transaction import PartialTxOutput
 
 if TYPE_CHECKING:
@@ -117,7 +118,10 @@ class Invoice(StoredObject):
 
     def get_address(self) -> str:
         """returns the first address, to be displayed in GUI"""
-        return self.outputs[0].address
+        if self.is_lightning():
+            return self._lnaddr.get_fallback_address()
+        else:
+            return self.outputs[0].address
 
     def get_amount_sat(self) -> Union[int, str]:
         """Returns a decimal satoshi amount, or '!' or None."""
@@ -128,6 +132,14 @@ class Invoice(StoredObject):
             if amount_msat is None:
                 return None
             return Decimal(amount_msat) / 1000
+
+    def get_bip21_URI(self):
+        from electrum.util import create_bip21_uri
+        addr = self.get_address()
+        amount = int(self.get_amount_sat())
+        message = self.message
+        uri = create_bip21_uri(addr, amount, message)
+        return str(uri)
 
     @amount_sat.validator
     def _validate_amount(self, attribute, value):
@@ -189,6 +201,15 @@ class Invoice(StoredObject):
 
     def get_time(self) -> int:
         return self._lnaddr.date if self.is_lightning() else self.time
+
+    @property
+    def get_outputs(self):
+        if not self.is_lightning():
+            return self.outputs
+        else:
+            addr = self.get_address()
+            amount = int(self.get_amount_sat())
+            return [PartialTxOutput.from_address_and_value(addr, amount)]
 
     def get_message(self) -> str:
         return self._lnaddr.get_description() if self.is_lightning() else self.message
