@@ -979,17 +979,11 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
             else:
                 network_text = _("Connected")
                 c, u, x = self.wallet.get_balance()
-                balance_text =  _("Balance") + ": %s "%(self.format_amount_and_units(c))
-                if u:
-                    balance_text +=  " [%s unconfirmed]"%(self.format_amount(u, is_diff=True).strip())
-                if x:
-                    balance_text +=  " [%s unmatured]"%(self.format_amount(x, is_diff=True).strip())
-                if self.wallet.has_lightning():
-                    l = self.wallet.lnworker.get_balance()
-                    balance_text += u'    \U000026a1 %s'%(self.format_amount_and_units(l).strip())
+                l = self.wallet.lnworker.get_balance() if self.wallet.has_lightning() else 0
+                balance_text =  _("Balance") + ": %s "%(self.format_amount_and_units(c+u+x+l))
                 # append fiat balance and price
                 if self.fx.is_enabled():
-                    balance_text += self.fx.get_fiat_status_text(c + u + x,
+                    balance_text += self.fx.get_fiat_status_text(c + u + x + l,
                         self.base_unit(), self.get_decimal_point()) or ''
                 if not self.network.proxy:
                     icon = read_QIcon("status_connected%s.png"%fork_str)
@@ -2340,14 +2334,78 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
 
         console.updateNamespace(methods)
 
+    def show_balance_dialog(self):
+        # todo:
+        # show total
+        # show pie chart (CosignWidget)
+        # show funds that are frozen
+
+        dialog = WindowModalDialog(self, _("Wallet Balance"))
+
+        vbox = QVBoxLayout()
+        c, u, x = self.wallet.get_balance()
+        l = self.wallet.lnworker.get_balance() if self.wallet.has_lightning() else 0
+
+        onchain_str =  self.config.format_amount_and_units(c + u + x).strip()
+        confirmed_str =  self.config.format_amount_and_units(c)
+        unconfirmed_str =  self.config.format_amount(u, is_diff=True)
+        unmatured_str =  self.config.format_amount(x, is_diff=True)
+        lightning_str =  self.config.format_amount_and_units(l).strip()
+
+        grid = QGridLayout()
+        grid.addWidget(WWLabel(_("Onchain") + ':'), 0, 0)
+        if u or x:
+            grid.addWidget(WWLabel(_("Confirmed") + ':'), 1, 0)
+        if u:
+            grid.addWidget(WWLabel(_("Unconfirmed") + ':'), 2, 0)
+        if x:
+            grid.addWidget(WWLabel(_("Unmatured") + ':'), 3, 0)
+        if l:
+            grid.addWidget(WWLabel(_("Lightning") + ':'), 4, 0)
+
+        grid.addWidget(WWLabel(onchain_str), 0, 1, alignment=Qt.AlignRight)
+        if u or x:
+            grid.addWidget(WWLabel(confirmed_str), 1, 1, alignment=Qt.AlignRight)
+        if u:
+            grid.addWidget(WWLabel(unconfirmed_str), 2, 1, alignment=Qt.AlignRight)
+        if x:
+            grid.addWidget(WWLabel(unmatured_str), 3, 1, alignment=Qt.AlignRight)
+        if l:
+            grid.addWidget(WWLabel(lightning_str), 4, 1, alignment=Qt.AlignRight)
+
+        if self.fx:
+            onchain_fiat_str = self.fx.format_amount_and_units(c + u + x)
+            confirmed_fiat_str = self.fx.format_amount_and_units(c)
+            unconfirmed_fiat_str = self.fx.format_amount_and_units(u)
+            unmatured_fiat_str = self.fx.format_amount_and_units(x)
+            lightning_fiat_str = self.fx.format_amount_and_units(l)
+            grid.addWidget(WWLabel(onchain_fiat_str), 0, 2, alignment=Qt.AlignRight)
+            if u or x:
+                grid.addWidget(WWLabel(confirmed_fiat_str), 1, 2, alignment=Qt.AlignRight)
+            if u:
+                grid.addWidget(WWLabel(unconfirmed_fiat_str), 2, 2, alignment=Qt.AlignRight)
+            if x:
+                grid.addWidget(WWLabel(unmatured_fiat_str), 3, 2, alignment=Qt.AlignRight)
+            if l:
+                grid.addWidget(WWLabel(lightning_fiat_str), 4, 2, alignment=Qt.AlignRight)
+
+        vbox.addLayout(grid)
+        vbox.addStretch(1)
+        btn_close = CloseButton(dialog)
+        btns = Buttons(btn_close)
+        vbox.addLayout(btns)
+        dialog.setLayout(vbox)
+        dialog.exec_()
+
+
     def create_status_bar(self):
 
         sb = QStatusBar()
         sb.setFixedHeight(35)
 
-        self.balance_label = QLabel("Loading wallet...")
-        self.balance_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self.balance_label.setStyleSheet("""QLabel { padding: 0 }""")
+        self.balance_label = QPushButton("Loading wallet...")
+        self.balance_label.setStyleSheet("QPushButton { padding: 5; border: none;} ")
+        self.balance_label.clicked.connect(self.show_balance_dialog)
         sb.addWidget(self.balance_label)
 
         self.search_box = QLineEdit()
