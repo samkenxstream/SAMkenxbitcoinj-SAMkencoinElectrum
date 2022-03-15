@@ -17,9 +17,9 @@ if TYPE_CHECKING:
 
 # convention: 'invoices' = outgoing , 'request' = incoming
 
-# types of payment requests
-PR_TYPE_ONCHAIN = 0
-PR_TYPE_LN = 2
+## types of payment requests
+#PR_TYPE_ONCHAIN = 0
+#PR_TYPE_LN = 2
 
 # status of payment requests
 PR_UNPAID   = 0     # if onchain: invoice amt not reached by txs in mempool+chain. if LN: invoice not paid.
@@ -79,16 +79,33 @@ def _decode_outputs(outputs) -> List[PartialTxOutput]:
 # Hence set some high expiration here
 LN_EXPIRY_NEVER = 100 * 365 * 24 * 60 * 60  # 100 years
 
+
+
 @attr.s
 class Invoice(StoredObject):
-    type = attr.ib(type=int, kw_only=True)
+    # swap_invoice is specifically for receiving
+    # id is for outgoing invoices
+    # height is for receiving
+    
+    message = attr.ib(type=str, kw_only=True)
+    amount_sat = attr.ib(kw_only=True)  # type: Union[int, str]  # in satoshis. can be '!'
+    exp = attr.ib(type=int, kw_only=True, validator=attr.validators.instance_of(int))
+    time = attr.ib(type=int, kw_only=True, validator=attr.validators.instance_of(int))
+    #id = attr.ib(type=str, kw_only=True)
+    outputs = attr.ib(kw_only=True, converter=_decode_outputs)  # type: List[PartialTxOutput]
+    bip70 = attr.ib(type=str, kw_only=True)  # type: Optional[str]
+    bip70_requestor = attr.ib(type=str, kw_only=True)  # type: Optional[str]
+    height = attr.ib(type=int, kw_only=True, validator=attr.validators.instance_of(int))
+    # lightning
+    amount_msat = attr.ib(kw_only=True)  # type: Optional[int]  # needed for zero amt invoices
+    lightning_invoice = attr.ib(type=str, kw_only=True)
+    swap_invoice = attr.ib(type=str, kw_only=True)
 
-    message: str
-    exp: int
-    time: int
+    __lnaddr = None
+
 
     def is_lightning(self):
-        return self.type == PR_TYPE_LN
+        return self.lightning_invoice is not None
 
     def get_status_str(self, status):
         status_str = pr_tooltips[status]
@@ -98,37 +115,19 @@ class Invoice(StoredObject):
                 status_str = _('Expires') + ' ' + age(expiration, include_seconds=True)
         return status_str
 
-    def get_amount_sat(self) -> Union[int, Decimal, str, None]:
-        """Returns a decimal satoshi amount, or '!' or None."""
-        raise NotImplementedError()
-
-    @classmethod
-    def from_json(cls, x: dict) -> 'Invoice':
-        # note: these raise if x has extra fields
-        if x.get('type') == PR_TYPE_LN:
-            return LNInvoice(**x)
-        else:
-            return OnchainInvoice(**x)
-
-
-@attr.s
-class OnchainInvoice(Invoice):
-    message = attr.ib(type=str, kw_only=True)
-    amount_sat = attr.ib(kw_only=True)  # type: Union[int, str]  # in satoshis. can be '!'
-    exp = attr.ib(type=int, kw_only=True, validator=attr.validators.instance_of(int))
-    time = attr.ib(type=int, kw_only=True, validator=attr.validators.instance_of(int))
-    id = attr.ib(type=str, kw_only=True)
-    outputs = attr.ib(kw_only=True, converter=_decode_outputs)  # type: List[PartialTxOutput]
-    bip70 = attr.ib(type=str, kw_only=True)  # type: Optional[str]
-    requestor = attr.ib(type=str, kw_only=True)  # type: Optional[str]
-    height = attr.ib(type=int, kw_only=True, validator=attr.validators.instance_of(int))
-
     def get_address(self) -> str:
         """returns the first address, to be displayed in GUI"""
         return self.outputs[0].address
 
     def get_amount_sat(self) -> Union[int, str]:
-        return self.amount_sat or 0
+        """Returns a decimal satoshi amount, or '!' or None."""
+        if not self.is_lightning():
+            return self.amount_sat or 0
+        else:
+            amount_msat = self.get_amount_msat()
+            if amount_msat is None:
+                return None
+            return Decimal(amount_msat) / 1000
 
     @amount_sat.validator
     def _validate_amount(self, attribute, value):
@@ -143,8 +142,7 @@ class OnchainInvoice(Invoice):
 
     @classmethod
     def from_bip70_payreq(cls, pr: 'PaymentRequest', height:int) -> 'OnchainInvoice':
-        return OnchainInvoice(
-            type=PR_TYPE_ONCHAIN,
+        return Invoice(
             amount_sat=pr.get_amount(),
             outputs=pr.get_outputs(),
             message=pr.get_memo(),
@@ -152,20 +150,14 @@ class OnchainInvoice(Invoice):
             time=pr.get_time(),
             exp=pr.get_expiration_date() - pr.get_time(),
             bip70=pr.raw.hex(),
-            requestor=pr.get_requestor(),
+            bip70_requestor=pr.get_requestor(),
             height=height,
         )
 
-@attr.s
-class LNInvoice(Invoice):
-    invoice = attr.ib(type=str)
-    amount_msat = attr.ib(kw_only=True)  # type: Optional[int]  # needed for zero amt invoices
-
-    __lnaddr = None
-
-    @invoice.validator
+    @lightning_invoice.validator
     def _validate_invoice_str(self, attribute, value):
-        lndecode(value)  # this checks the str can be decoded
+        if value is not None:
+            lndecode(value)  # this checks the str can be decoded
 
     @amount_msat.validator
     def _validate_amount(self, attribute, value):
@@ -180,7 +172,7 @@ class LNInvoice(Invoice):
     @property
     def _lnaddr(self) -> LnAddr:
         if self.__lnaddr is None:
-            self.__lnaddr = lndecode(self.invoice)
+            self.__lnaddr = lndecode(self.lightning_invoice)
         return self.__lnaddr
 
     @property
@@ -192,27 +184,18 @@ class LNInvoice(Invoice):
         amount = int(amount_btc * COIN * 1000) if amount_btc else None
         return amount or self.amount_msat
 
-    def get_amount_sat(self) -> Union[Decimal, None]:
-        amount_msat = self.get_amount_msat()
-        if amount_msat is None:
-            return None
-        return Decimal(amount_msat) / 1000
+    def get_exp(self) -> int:
+        return self._lnaddr.get_expiry() if self.is_lightning() else self.exp
 
-    @property
-    def exp(self) -> int:
-        return self._lnaddr.get_expiry()
+    def get_time(self) -> int:
+        return self._lnaddr.date if self.is_lightning() else self.time
 
-    @property
-    def time(self) -> int:
-        return self._lnaddr.date
-
-    @property
-    def message(self) -> str:
-        return self._lnaddr.get_description()
+    def get_message(self) -> str:
+        return self._lnaddr.get_description() if self.is_lightning() else self.message
 
     @classmethod
-    def from_bech32(cls, invoice: str) -> 'LNInvoice':
-        """Constructs LNInvoice object from BOLT-11 string.
+    def from_bech32(cls, invoice: str) -> 'Invoice':
+        """Constructs Invoice object from BOLT-11 string.
         Might raise InvoiceError.
         """
         try:
@@ -220,9 +203,19 @@ class LNInvoice(Invoice):
         except Exception as e:
             raise InvoiceError(e) from e
         amount_msat = lnaddr.get_amount_msat()
-        return LNInvoice(
-            type=PR_TYPE_LN,
-            invoice=invoice,
+        timestamp = int(time.time())
+        
+        return Invoice(
+            message=lnaddr.get_description(),
+            amount_sat=int(amount_msat//1000),
+            time = timestamp,
+            exp = lnaddr.get_expiry() - timestamp,
+            outputs = [],
+            bip70=None,
+            bip70_requestor=None,
+            height=0,
+            swap_invoice=None,
+            lightning_invoice=invoice,
             amount_msat=amount_msat,
         )
 

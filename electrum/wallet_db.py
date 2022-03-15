@@ -53,7 +53,7 @@ if TYPE_CHECKING:
 
 OLD_SEED_VERSION = 4        # electrum versions < 2.0
 NEW_SEED_VERSION = 11       # electrum versions >= 2.0
-FINAL_SEED_VERSION = 44     # electrum >= 2.7 will set this to prevent
+FINAL_SEED_VERSION = 45     # electrum >= 2.7 will set this to prevent
                             # old versions from overwriting new format
 
 
@@ -193,6 +193,7 @@ class WalletDB(JsonDB):
         self._convert_version_42()
         self._convert_version_43()
         self._convert_version_44()
+        self._convert_version_45()
         self.put('seed_version', FINAL_SEED_VERSION)  # just to be sure
 
         self._after_upgrade_tasks()
@@ -864,6 +865,19 @@ class WalletDB(JsonDB):
             item['channel_type'] = channel_type
         self.data['seed_version'] = 44
 
+    def _convert_version_45(self):
+        if not self._is_upgrade_method_needed(44, 44):
+            return
+        swaps = self.data.get('submarine_swaps', {})
+        for key, item in swaps.items():
+            item['receive_address'] = None
+        # todo
+        invoices = self.data.get('invoices', {})
+        invoices.clear()
+        requests = self.data.get('payment_requests', {})
+        requests.clear()
+        self.data['seed_version'] = 45
+
     def _convert_imported(self):
         if not self._is_upgrade_method_needed(0, 13):
             return
@@ -1350,9 +1364,9 @@ class WalletDB(JsonDB):
             # note: for performance, "deserialize=False" so that we will deserialize these on-demand
             v = dict((k, tx_from_any(x, deserialize=False)) for k, x in v.items())
         if key == 'invoices':
-            v = dict((k, Invoice.from_json(x)) for k, x in v.items())
+            v = dict((k, Invoice(**x)) for k, x in v.items())
         if key == 'payment_requests':
-            v = dict((k, Invoice.from_json(x)) for k, x in v.items())
+            v = dict((k, Invoice(**x)) for k, x in v.items())
         elif key == 'adds':
             v = dict((k, UpdateAddHtlc.from_tuple(*x)) for k, x in v.items())
         elif key == 'fee_updates':
